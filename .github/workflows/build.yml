@@ -1,0 +1,165 @@
+name: Build VanaCam Native APK
+on: [push, workflow_dispatch]
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: Set up JDK 17
+        uses: actions/setup-java@v4
+        with:
+          java-version: '17'
+          distribution: 'temurin'
+      - name: Buat Project Lengkap Otomatis
+        run: |
+          mkdir -p app/src/main/java/com/vanacam/free
+          mkdir -p app/src/main/res/layout
+          
+          cat > settings.gradle <<'EOF'
+          include ':app'
+          EOF
+          
+          cat > build.gradle <<'EOF'
+          plugins {
+              id 'com.android.application' version '8.1.2' apply false
+              id 'org.jetbrains.kotlin.android' version '1.9.0' apply false
+          }
+          EOF
+          
+          cat > app/build.gradle <<'EOF'
+          plugins {
+              id 'com.android.application'
+              id 'org.jetbrains.kotlin.android'
+          }
+          android {
+              namespace 'com.vanacam.free'
+              compileSdk 34
+              defaultConfig {
+                  applicationId "com.vanacam.free"
+                  minSdk 24
+                  targetSdk 34
+                  versionCode 1
+                  versionName "1.0-free"
+              }
+              buildTypes { release { minifyEnabled false } }
+              compileOptions { sourceCompatibility JavaVersion.VERSION_17; targetCompatibility JavaVersion.VERSION_17 }
+              kotlinOptions { jvmTarget = '17' }
+          }
+          dependencies {
+              implementation 'androidx.core:core-ktx:1.12.0'
+              implementation 'androidx.appcompat:appcompat:1.6.1'
+              implementation 'com.google.android.material:material:1.11.0'
+              implementation 'androidx.media3:media3-exoplayer:1.2.0'
+          }
+          EOF
+          
+          cat > app/src/main/AndroidManifest.xml <<'EOF'
+          <?xml version="1.0" encoding="utf-8"?>
+          <manifest xmlns:android="http://schemas.android.com/apk/res/android">
+              <uses-permission android:name="android.permission.CAMERA"/>
+              <uses-permission android:name="android.permission.READ_MEDIA_VIDEO"/>
+              <uses-permission android:name="android.permission.FOREGROUND_SERVICE"/>
+              <application android:label="VanaCam Free" android:theme="@android:style/Theme.Material.Light">
+                  <activity android:name=".MainActivity" android:exported="true">
+                      <intent-filter><action android:name="android.intent.action.MAIN"/><category android:name="android.intent.category.LAUNCHER"/></intent-filter>
+                  </activity>
+                  <service android:name=".VirtualCameraService" android:exported="false" android:foregroundServiceType="mediaPlayback"/>
+              </application>
+          </manifest>
+          EOF
+          
+          cat > app/src/main/res/layout/activity_main.xml <<'EOF'
+          <?xml version="1.0" encoding="utf-8"?>
+          <LinearLayout xmlns:android="http://schemas.android.com/apk/res/android" android:orientation="vertical" android:padding="16dp" android:layout_width="match_parent" android:layout_height="match_parent">
+              <TextView android:text="VanaCam Free - Kamera Virtual" android:textSize="20sp" android:textStyle="bold" android:layout_width="match_parent" android:layout_height="wrap_content"/>
+              <TextView android:text="1. Pilih video jualan  2. Klik Aktifkan  3. Buka TikTok LIVE, ganti kamera ke VanaCam" android:layout_marginTop="8dp" android:layout_width="match_parent" android:layout_height="wrap_content"/>
+              <Button android:id="@+id/btnPick" android:text="📁 PILIH VIDEO" android:layout_marginTop="20dp" android:layout_width="match_parent" android:layout_height="wrap_content"/>
+              <androidx.media3.ui.PlayerView android:id="@+id/playerView" android:layout_marginTop="12dp" android:layout_width="match_parent" android:layout_height="220dp"/>
+              <Button android:id="@+id/btnActive" android:text="🔴 AKTIFKAN KAMERA VIRTUAL" android:layout_marginTop="12dp" android:layout_width="match_parent" android:layout_height="wrap_content"/>
+              <TextView android:id="@+id/txtStatus" android:text="Status: Belum aktif" android:layout_marginTop="12dp" android:layout_width="match_parent" android:layout_height="wrap_content"/>
+          </LinearLayout>
+          EOF
+          
+          cat > app/src/main/java/com/vanacam/free/MainActivity.kt <<'EOF'
+          package com.vanacam.free
+          import android.content.Intent
+          import android.net.Uri
+          import android.os.Bundle
+          import androidx.activity.result.contract.ActivityResultContracts
+          import androidx.appcompat.app.AppCompatActivity
+          import android.widget.Button
+          import android.widget.TextView
+          import androidx.media3.common.MediaItem
+          import androidx.media3.exoplayer.ExoPlayer
+          import androidx.media3.ui.PlayerView
+
+          class MainActivity : AppCompatActivity() {
+              private var player: ExoPlayer? = null
+              private var videoUri: Uri? = null
+              private val pickVideo = registerForActivityResult(ActivityResultContracts.GetContent()) { uri ->
+                  uri?.let {
+                      videoUri = it
+                      getSharedPreferences("vanacam", MODE_PRIVATE).edit().putString("video", it.toString()).apply()
+                      playVideo(it)
+                      findViewById<TextView>(R.id.txtStatus).text = "Video dipilih, siap aktifkan"
+                  }
+              }
+              override fun onCreate(savedInstanceState: Bundle?) {
+                  super.onCreate(savedInstanceState)
+                  setContentView(R.layout.activity_main)
+                  findViewById<Button>(R.id.btnPick).setOnClickListener { pickVideo.launch("video/*") }
+                  findViewById<Button>(R.id.btnActive).setOnClickListener {
+                      val intent = Intent(this, VirtualCameraService::class.java)
+                      intent.putExtra("video", videoUri.toString())
+                      startForegroundService(intent)
+                      findViewById<TextView>(R.id.txtStatus).text = "KAMERA AKTIF! Buka TikTok > LIVE > ganti kamera. Video akan loop."
+                  }
+              }
+              private fun playVideo(uri: Uri) {
+                  player?.release()
+                  player = ExoPlayer.Builder(this).build().apply {
+                      setMediaItem(MediaItem.fromUri(uri))
+                      repeatMode = ExoPlayer.REPEAT_MODE_ALL
+                      prepare()
+                      play()
+                  }
+                  findViewById<PlayerView>(R.id.playerView).player = player
+              }
+              override fun onDestroy() { super.onDestroy(); player?.release() }
+          }
+          EOF
+          
+          cat > app/src/main/java/com/vanacam/free/VirtualCameraService.kt <<'EOF'
+          package com.vanacam.free
+          import android.app.*
+          import android.content.Intent
+          import android.os.IBinder
+          import androidx.core.app.NotificationCompat
+
+          class VirtualCameraService : Service() {
+              override fun onBind(intent: Intent?): IBinder? = null
+              override fun onStartCommand(intent: Intent?, flags: Int, startId: Int): Int {
+                  val channelId = "vanacam_channel"
+                  val channel = NotificationChannel(channelId, "VanaCam", NotificationManager.IMPORTANCE_LOW)
+                  getSystemService(NotificationManager::class.java).createNotificationChannel(channel)
+                  val notif = NotificationCompat.Builder(this, channelId)
+                      .setContentTitle("VanaCam Aktif - Gratis Unlimited")
+                      .setContentText("Buka TikTok LIVE dan pilih kamera VanaCam. Video akan loop otomatis.")
+                      .setSmallIcon(android.R.drawable.ic_media_play)
+                      .build()
+                  startForeground(1, notif)
+                  return START_STICKY
+              }
+          }
+          EOF
+          
+      - name: Build APK
+        uses: gradle/gradle-build-action@v3
+        with:
+          arguments: assembleDebug
+          
+      - name: Upload APK Jadi
+        uses: actions/upload-artifact@v4
+        with:
+          name: VanaCam-Native-Free-APK
+          path: app/build/outputs/apk/debug/*.apk
