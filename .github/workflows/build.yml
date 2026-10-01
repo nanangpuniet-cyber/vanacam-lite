@@ -19,27 +19,30 @@ jobs:
           distribution: 'temurin'
           java-version: '17'
 
-      - name: Setup Android SDK
-        uses: android-actions/setup-android@v3
-
-      - name: Install Android SDK packages
+      - name: Setup Android SDK 34
         run: |
           set -euxo pipefail
-          yes | "$ANDROID_HOME"/cmdline-tools/latest/bin/sdkmanager --licenses
-          "$ANDROID_HOME"/cmdline-tools/latest/bin/sdkmanager \
+          mkdir -p $ANDROID_HOME/cmdline-tools
+          cd $ANDROID_HOME/cmdline-tools
+          wget -q https://dl.google.com/android/repository/commandlinetools-linux-11076708_latest.zip -O tools.zip
+          unzip -q tools.zip
+          rm -f tools.zip
+          mv cmdline-tools latest
+          yes | $ANDROID_HOME/cmdline-tools/latest/bin/sdkmanager --licenses
+          $ANDROID_HOME/cmdline-tools/latest/bin/sdkmanager \
             "platform-tools" \
             "platforms;android-34" \
             "build-tools;34.0.0"
+          echo "sdk.dir=$ANDROID_HOME" > local.properties
 
       - name: Setup Gradle
         uses: gradle/actions/setup-gradle@v3
         with:
           gradle-version: 8.4
 
-      - name: Setup project
+      - name: Create Android app
         run: |
           set -euxo pipefail
-
           mkdir -p app/src/main/java/com/vanacam/free
           mkdir -p app/src/main/res/layout
 
@@ -70,8 +73,6 @@ jobs:
               id 'org.jetbrains.kotlin.android' version '1.9.0' apply false
           }
           EOF
-
-          echo "sdk.dir=$ANDROID_HOME" > local.properties
 
           cat > app/build.gradle <<'EOF'
           plugins {
@@ -115,10 +116,6 @@ jobs:
               implementation 'androidx.media3:media3-exoplayer:1.2.0'
               implementation 'androidx.media3:media3-ui:1.2.0'
           }
-          EOF
-
-          cat > app/proguard-rules.pro <<'EOF'
-          # no custom rules
           EOF
 
           cat > app/src/main/AndroidManifest.xml <<'EOF'
